@@ -31,7 +31,7 @@ variables {
     environment-type = "test"
     owner-business   = "test"
     budget-holder    = "testteam"
-    source-repo      = "UKHomeOffice/core-cloud-msk-tf-module"
+    source-repo      = "Home-Office-Digital/core-cloud-msk-tf-module"
   }
 }
 
