@@ -32,6 +32,17 @@ resource "aws_security_group" "sg_msk" {
   }
 }
 
+locals {
+  create_certificate_authority = var.tls_authentication && var.certificate_authority == true && length(var.ca_arn) == 0
+  create_configuration         = var.config_name != "" && var.config_arn == ""
+  use_configuration            = var.config_name != "" || var.config_arn != ""
+  selected_ca_arns             = length(var.ca_arn) > 0 ? var.ca_arn : try([aws_acmpca_certificate_authority.msk_with_ca[0].arn], [])
+  selected_ca_arn              = length(local.selected_ca_arns) > 0 ? local.selected_ca_arns[0] : null
+  use_ca_policy                = var.tls_authentication && (length(var.ca_arn) > 0 || local.create_certificate_authority)
+  configuration_arn            = var.config_arn != "" ? var.config_arn : try(aws_msk_configuration.msk_cluster[0].arn, null)
+  configuration_revision       = var.config_arn != "" ? var.config_revision : try(aws_msk_configuration.msk_cluster[0].latest_revision, null)
+}
+
 resource "aws_iam_role" "msk_role" {
   name = "${var.cluster_name}-role"
 
@@ -140,6 +151,7 @@ resource "aws_msk_cluster" "msk_cluster" {
   cluster_name           = "${var.project_name}-${var.cluster_name}-${var.environment}-msk"
   kafka_version          = var.kafka_version
   number_of_broker_nodes = var.number_of_broker_nodes
+  enhanced_monitoring    = var.enhanced_monitoring
 
   broker_node_group_info {
     instance_type   = var.instance_type
@@ -170,13 +182,23 @@ resource "aws_msk_cluster" "msk_cluster" {
     dynamic "tls" {
       for_each = var.tls_authentication ? [1] : []
       content {
-        certificate_authority_arns = [aws_acmpca_certificate_authority.msk_with_ca[0].arn]
+        certificate_authority_arns = local.selected_ca_arns
       }
+    }
+  }
+
+  dynamic "configuration_info" {
+    for_each = local.use_configuration ? [1] : []
+    content {
+      arn      = local.configuration_arn
+      revision = local.configuration_revision
     }
   }
 
 
   encryption_info {
+    encryption_at_rest_kms_key_arn = var.encryption_at_rest_kms_key_arn
+
     encryption_in_transit {
       client_broker = "TLS"
       in_cluster    = true
@@ -192,7 +214,23 @@ resource "aws_msk_cluster" "msk_cluster" {
     }
   }
 
+  lifecycle {
+    precondition {
+      condition     = !var.tls_authentication || length(local.selected_ca_arns) > 0
+      error_message = "A certificate authority must be provided with ca_arn or created with certificate_authority when tls_authentication is enabled."
+    }
+  }
+
   tags = local.common_tags
+}
+
+resource "aws_msk_configuration" "msk_cluster" {
+  count = local.create_configuration ? 1 : 0
+
+  kafka_versions    = var.config_kafka_versions
+  name              = var.config_name
+  description       = var.config_description
+  server_properties = var.config_server_properties
 }
 
 ## MSK Scaling
@@ -231,7 +269,7 @@ resource "aws_appautoscaling_policy" "msk_appautoscaling_policy" {
 ## Certificate Authority
 
 resource "aws_acmpca_certificate_authority" "msk_with_ca" {
-  count = var.certificate_authority == true ? 1 : 0
+  count = local.create_certificate_authority ? 1 : 0
   tags  = local.common_tags
 
   certificate_authority_configuration {
@@ -248,6 +286,8 @@ resource "aws_acmpca_certificate_authority" "msk_with_ca" {
 }
 
 data "aws_iam_policy_document" "msk_ca_policy" {
+  count = local.use_ca_policy ? 1 : 0
+
   statement {
     effect = "Allow"
 
@@ -255,20 +295,22 @@ data "aws_iam_policy_document" "msk_ca_policy" {
       "acm-pca:IssueCertificate",
       "acm-pca:GetCertificate",
     ]
-    resources = [aws_msk_cluster.msk_cluster.arn]
+
+    resources = local.selected_ca_arns
   }
 }
 
 resource "aws_iam_policy" "msk_iam_ca_policy" {
+  count  = local.use_ca_policy ? 1 : 0
   name   = "${var.cluster_name}-acmpca-policy"
-  policy = data.aws_iam_policy_document.msk_ca_policy.json
+  policy = data.aws_iam_policy_document.msk_ca_policy[0].json
   tags   = local.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "msk_ca_policy_attachment" {
-  count      = var.certificate_authority == true ? 1 : 0
+  count      = local.use_ca_policy ? 1 : 0
   role       = aws_iam_role.msk_role.name
-  policy_arn = aws_iam_policy.msk_iam_ca_policy.arn
+  policy_arn = aws_iam_policy.msk_iam_ca_policy[0].arn
 }
 
 

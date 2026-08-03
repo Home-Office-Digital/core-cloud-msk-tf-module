@@ -2,6 +2,10 @@ All notable changes to this project will be documented in this file. This will p
 
 eg:
 
+### [0.0.5] 2026-07-17
+
+  * Add support for existing private CAs, MSK configuration attachment and creation, enhanced monitoring, and customer managed KMS keys for encryption at rest.
+
 ### [0.0.1] 2026-03-12
 
   * Initial tag created for Core Cloud MSK Terraform module

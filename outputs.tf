@@ -21,7 +21,7 @@ output "msk_sg_id" {
 }
 
 output "msk_cluster_ca_arn" {
-  description = "The MSK cluster CA arn"
-  value       = aws_acmpca_certificate_authority.msk_with_ca[0].arn
+  description = "The primary MSK cluster CA ARN (first value when multiple CA ARNs are provided)"
+  value       = local.selected_ca_arn
   sensitive   = true
 }
